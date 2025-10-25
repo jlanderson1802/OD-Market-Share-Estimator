@@ -1,0 +1,11 @@
+providers:
+  - r"\bWeave\b"
+  - r"\bRingCentral\b"
+  - r"\bNextiva\b"
+  - r"\bVonage\b"
+  - r"\b8x8\b"
+  - r"\bDialpad\b"
+  - r"\bMango\s*Voice\b"
+  - r"\bOoma\b"
+  - r"\bZoom Phone\b"
+  - r"\bGoTo\s*\(Jive\)\b|\bGoTo Connect\b"

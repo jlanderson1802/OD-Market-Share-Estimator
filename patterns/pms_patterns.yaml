@@ -1,0 +1,21 @@
+# Strong and weak evidence for PMS fingerprints
+strong:
+  open_dental:
+    - r"patientviewer\.com"
+    - r"/WebForms\.html"
+    - r"\bWeb\s*Sched\b"
+  dentrix:
+    - r"\bDentrix Patient Portal\b"
+    - r"\beCentral\b"
+  eaglesoft:
+    - r"patient\.operadds\.com"
+weak:
+  open_dental:
+    - r"\bOpen Dental\b"
+    - r"opendental"
+  dentrix:
+    - r"\bDentrix\b"
+    - r"hsps\.pro"
+  eaglesoft:
+    - r"\bEaglesoft\b"
+    - r"\bPatterson\b"

@@ -1,0 +1,37 @@
+# Configuration with API keys
+config.yaml
+
+# Data output directories
+data/
+sample/*.csv
+!sample/seeds.sample.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cap reached flags
+*_cap_reached.txt
+
+# Playwright browsers
+.playwright/

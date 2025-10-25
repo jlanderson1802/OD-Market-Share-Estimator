@@ -1,0 +1,11 @@
+booking:
+  - r"nexhealth|localmed|zocdoc|opencare|tab32|yapi|modento"
+  - r"weave|solutionreach|lighthouse\s*360|doctible"
+  - r"dental intel|dentalintel"
+forms:
+  - r"jotform|typeform|gravityforms|formstack|intakeq|yapi|modento|denticon|hellosign|docusign"
+payments:
+  - r"stripe|square|rectangle\s*health|rectanglehealth|rectanglepay|carecredit|affirm|flexpay"
+all:
+  - r"birdeye|podium|swellcx|grade\.us|yotpo"
+  - r"hubspot|pardot|marketo|activecampaign|mailchimp|klaviyo"
