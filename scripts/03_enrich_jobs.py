@@ -8,8 +8,9 @@ def load_config(path):
   with open(path, "r", encoding="utf-8") as f:
     return yaml.safe_load(f)
 
-def search_bing(api_key, query, count=5):
-  url = "https://api.bing.microsoft.com/v7.0/search"
+def search_bing(api_key, query, count=5, endpoint=None):
+  # Use custom endpoint if provided, otherwise use default
+  url = endpoint or "https://api.bing.microsoft.com/v7.0/search"
   headers = {"Ocp-Apim-Subscription-Key": api_key}
   params = {"q": query, "count": count, "mkt": "en-US", "responseFilter":"Webpages"}
   r = requests.get(url, headers=headers, params=params, timeout=20)
@@ -42,6 +43,7 @@ def main():
 
   cfg = load_config(args.config)
   bing_key = cfg.get("bing_search_api_key","")
+  bing_endpoint = cfg.get("bing_search_endpoint","")
   serp_key = cfg.get("serpapi_api_key","")
 
   df = pd.read_csv(args.in)
@@ -54,7 +56,7 @@ def main():
     q = f'"{name}" ("Open Dental" OR Dentrix OR Eaglesoft)'
     items = []
     if bing_key:
-      items += search_bing(bing_key, q, count=5)
+      items += search_bing(bing_key, q, count=5, endpoint=bing_endpoint if bing_endpoint else None)
     if serp_key and not items:
       items += search_serpapi(serp_key, q, count=5)
     hits = []

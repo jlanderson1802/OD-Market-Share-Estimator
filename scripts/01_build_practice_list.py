@@ -11,6 +11,18 @@ def load_config(path):
   with open(path, "r", encoding="utf-8") as f:
     return yaml.safe_load(f)
 
+def yelp_get_business_details(session, api_key, business_id):
+  """Fetch business details to get actual website URL"""
+  url = f"https://api.yelp.com/v3/businesses/{business_id}"
+  headers = {"Authorization": f"Bearer {api_key}"}
+  try:
+    r = session.get(url, headers=headers, timeout=20)
+    if r.status_code == 200:
+      return r.json()
+  except:
+    pass
+  return {}
+
 def yelp_city(session, api_key, city, limit=200, remaining_calls=None):
   out = []
   url = "https://api.yelp.com/v3/businesses/search"
@@ -22,6 +34,17 @@ def yelp_city(session, api_key, city, limit=200, remaining_calls=None):
     calls_used += 1
     js = r.json()
     for b in js.get("businesses", []):
+      # Fetch business details to get actual website
+      business_id = b.get("id", "")
+      website = ""
+      if business_id and (remaining_calls is None or calls_used < remaining_calls):
+        details = yelp_get_business_details(session, api_key, business_id)
+        calls_used += 1
+        website = details.get("url", "")  # Yelp business page as fallback
+        # Check if there's an actual website in the details
+        if details:
+          website = details.get("url", "")
+
       out.append({
         "name": b.get("name",""),
         "address": ", ".join(filter(None, [
@@ -29,7 +52,7 @@ def yelp_city(session, api_key, city, limit=200, remaining_calls=None):
             b.get("location",{}).get("city",""),
             b.get("location",{}).get("state",""),
         ])),
-        "website": b.get("url",""),
+        "website": website,
         "phone": b.get("display_phone",""),
         "source": "yelp"
       })
@@ -40,9 +63,21 @@ def yelp_city(session, api_key, city, limit=200, remaining_calls=None):
     params["offset"] += 50
   return out, calls_used
 
+def google_get_place_details(session, api_key, place_id):
+  """Fetch place details to get website and phone"""
+  url = "https://maps.googleapis.com/maps/api/place/details/json"
+  params = {"place_id": place_id, "fields": "website,formatted_phone_number", "key": api_key}
+  try:
+    r = session.get(url, params=params, timeout=20)
+    if r.status_code == 200:
+      return r.json().get("result", {})
+  except:
+    pass
+  return {}
+
 def google_places_city(session, api_key, city, limit=200, remaining_calls=10):
-  """Fetch via Places Text Search (no Place Details). Returns list and the number of API calls used.
-  Each request (including next_page_token fetches) is counted as one call.
+  """Fetch via Places Text Search + Place Details for websites. Returns list and the number of API calls used.
+  Each request (including next_page_token fetches and place details) is counted as one call.
   remaining_calls: how many Google calls we're allowed to make.
   """
   out = []
@@ -57,11 +92,21 @@ def google_places_city(session, api_key, city, limit=200, remaining_calls=10):
     calls_used += 1
     data = r.json()
     for res in data.get("results", []):
+      # Fetch place details to get actual website
+      place_id = res.get("place_id", "")
+      website = ""
+      phone = ""
+      if place_id and (remaining_calls is None or calls_used < remaining_calls):
+        details = google_get_place_details(session, api_key, place_id)
+        calls_used += 1
+        website = details.get("website", "")
+        phone = details.get("formatted_phone_number", "")
+
       out.append({
         "name": res.get("name",""),
         "address": res.get("formatted_address",""),
-        "website": "",
-        "phone": "",
+        "website": website,
+        "phone": phone,
         "source": "google_places"
       })
       if len(out) >= limit:
@@ -78,6 +123,7 @@ def main():
   ap.add_argument("--seeds", required=True, help="CSV with column 'city'")
   ap.add_argument("--out", required=True, help="Output CSV path")
   ap.add_argument("--config", required=True, help="config.yaml with API keys + optional unit costs")
+  ap.add_argument("--existing-practices", default="", help="Optional: Path to existing practices.csv to avoid duplicates when expanding dataset")
   ap.add_argument("--limit-per-city", type=int, default=200)
 
   # Budget control flags
@@ -161,15 +207,40 @@ def main():
         print("[Budget] Caps reached; stopping further city lookups.")
         break
 
-  # Deduplicate by name+address
+  # Load existing practices if provided (for expanding dataset without duplicates)
   seen = set()
   out_rows = []
+
+  if args.existing_practices and Path(args.existing_practices).exists():
+    print(f"[Dedup] Loading existing practices from {args.existing_practices}")
+    with open(args.existing_practices, "r", encoding="utf-8-sig") as f:
+      for existing_row in csv.DictReader(f):
+        name = existing_row.get("name", "")
+        address = existing_row.get("address", "")
+        if name and address:
+          key = (name.lower(), address.lower())
+          seen.add(key)
+          # Keep existing practices in output
+          out_rows.append({
+            "name": name,
+            "website": existing_row.get("website", ""),
+            "phone": existing_row.get("phone", ""),
+            "address": address,
+            "source": existing_row.get("source", "existing")
+          })
+    print(f"[Dedup] Loaded {len(out_rows)} existing practices; will skip duplicates")
+
+  # Deduplicate new results by name+address
+  initial_count = len(out_rows)
   for r in rows:
     key = (r["name"].lower(), r["address"].lower())
     if key in seen:
       continue
     seen.add(key)
     out_rows.append(r)
+
+  new_count = len(out_rows) - initial_count
+  print(f"[Dedup] Added {new_count} new unique practices (skipped {len(rows) - new_count} duplicates)")
 
   # Assign ids and basic columns
   Path(args.out).parent.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import asyncio, aiohttp, async_timeout, re, csv, json, argparse, sys, time, random
+import asyncio, aiohttp, re, csv, json, argparse, sys, time, random, threading
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
@@ -96,7 +96,7 @@ async def fetch_robots(session, base_url, host_state: HostState):
     # Add retry logic for robots.txt failures
     for attempt in range(3):
       try:
-        with async_timeout.timeout(DEFAULT_TIMEOUT):
+        async with asyncio.timeout(DEFAULT_TIMEOUT):
           async with session.get(robots_url, headers={"User-Agent": USER_AGENT}, ssl=False) as resp:
             if resp.status == 200:
               text = await resp.text(errors="ignore")
@@ -154,7 +154,10 @@ async def fetch_robots(session, base_url, host_state: HostState):
           # Last attempt failed - fallback to permissive
           rp = robotparser.RobotFileParser()
           rp.set_url(base_url + "/robots.txt")
-          rp.read()
+          try:
+            rp.read()
+          except:
+            pass  # If sync read also fails, use empty robots
           host_state.robots = rp
           host_state.robots_fetch_time = current_time
           return
@@ -162,7 +165,10 @@ async def fetch_robots(session, base_url, host_state: HostState):
     # Fallback to permissive
     rp = robotparser.RobotFileParser()
     rp.set_url(base_url + "/robots.txt")
-    rp.read()
+    try:
+      rp.read()
+    except:
+      pass  # If sync read also fails, use empty robots
     host_state.robots = rp
     host_state.robots_fetch_time = current_time
 
@@ -184,7 +190,7 @@ async def fetch_http(session, url, host_state: HostState):
   await polite_wait(host_state)
   host_state.pages_attempted += 1
   try:
-    with async_timeout.timeout(DEFAULT_TIMEOUT):
+    async with asyncio.timeout(DEFAULT_TIMEOUT):
       async with host_state.sem:
         async with session.get(url, headers=headers, ssl=False, allow_redirects=True) as resp:
           text = await resp.text(errors="ignore")
@@ -239,8 +245,11 @@ async def fetch_js(playwright_ctx, url, host_state: HostState):
 def find_matches(patterns, blob):
   hits = []
   for pat in patterns:
-    if re.search(pat, blob, flags=re.IGNORECASE):
-      hits.append(pat)
+    match = re.search(pat, blob, flags=re.IGNORECASE)
+    if match:
+      # Extract the actual matched text instead of the pattern
+      matched_text = match.group(0)
+      hits.append(matched_text)
   return list(set(hits))
 
 def extract_links(soup):
@@ -251,6 +260,52 @@ def extract_links(soup):
       continue
     L.append(href)
   return L
+
+def extract_external_service_urls(links, practice_domain):
+  """Extract external URLs that might be booking/payment/forms services"""
+  booking_urls = []
+  payment_urls = []
+  forms_urls = []
+
+  # Patterns that indicate booking/payment/forms in URLs
+  booking_patterns = [
+    r'book', r'appointment', r'schedule', r'calendar',
+    r'nexhealth', r'localmed', r'zocdoc', r'weave', r'solutionreach',
+    r'recallmax', r'dental4\.me', r'curvehero', r'yapi'
+  ]
+  payment_patterns = [r'pay', r'payment', r'billing', r'stripe', r'square']
+  forms_patterns = [r'form', r'intake', r'jotform', r'typeform', r'docusign']
+
+  for link in links:
+    if not link.startswith('http'):
+      continue
+
+    try:
+      parsed = urlparse(link)
+      link_domain = parsed.netloc.lower()
+
+      # Skip if it's the practice's own domain
+      if practice_domain and practice_domain.lower() in link_domain:
+        continue
+
+      link_lower = link.lower()
+
+      # Check for booking URLs
+      if any(re.search(pat, link_lower) for pat in booking_patterns):
+        booking_urls.append(link)
+
+      # Check for payment URLs
+      if any(re.search(pat, link_lower) for pat in payment_patterns):
+        payment_urls.append(link)
+
+      # Check for forms URLs
+      if any(re.search(pat, link_lower) for pat in forms_patterns):
+        forms_urls.append(link)
+
+    except:
+      continue
+
+  return list(set(booking_urls)), list(set(payment_urls)), list(set(forms_urls))
 
 def score_pms(pms_patterns, site_combined, job_links_text=""):
   evidence_site = []
@@ -315,6 +370,7 @@ async def audit_site(session, row, pms_patterns, third_patterns, phone_patterns,
 
   evidence_urls = []
   site_html, site_links, site_texts = [], [], []
+  all_links = []  # Collect all links for external service URL extraction
   final_url = ""
   http_status = ""
 
@@ -368,6 +424,7 @@ async def audit_site(session, row, pms_patterns, third_patterns, phone_patterns,
 
     soup = BeautifulSoup(html, "html.parser")
     links = extract_links(soup)
+    all_links.extend(links)  # Collect for external service URL extraction
     link_blob = "\n".join(links)
     text_blob = soup.get_text(separator=" ").lower()
 
@@ -402,6 +459,10 @@ async def audit_site(session, row, pms_patterns, third_patterns, phone_patterns,
 
   likely_booking_vendor = tp_booking[0] if tp_booking else ""
   likely_phone_provider = phone_hits[0] if phone_hits else ""
+
+  # Extract external booking/payment/forms URLs
+  practice_domain = urlparse(website).netloc if website else ""
+  booking_urls, payment_urls, forms_urls = extract_external_service_urls(all_links, practice_domain)
 
   # Aggregate some host-level evidence samples
   for ev in evidence_urls[:3]:
@@ -438,6 +499,11 @@ async def audit_site(session, row, pms_patterns, third_patterns, phone_patterns,
 
     # Evidence URLs we found
     "evidence_urls": ";".join(list(dict.fromkeys(evidence_urls))),
+
+    # External service URLs (for post-analysis of vendors)
+    "booking_urls": ";".join(booking_urls[:5]),  # Limit to 5 to keep CSV manageable
+    "payment_urls": ";".join(payment_urls[:5]),
+    "forms_urls": ";".join(forms_urls[:5]),
   }
 
 async def run(in_path, out_csv, out_jsonl, global_concurrency, use_js, fail_alert_pct, domain_report_path=None):
@@ -464,46 +530,7 @@ async def run(in_path, out_csv, out_jsonl, global_concurrency, use_js, fail_aler
 
   totals = {"attempted": 0, "success": 0, "failed": 0}
 
-  connector = aiohttp.TCPConnector(limit=global_concurrency, ssl=False)
-  async with aiohttp.ClientSession(connector=connector) as session:
-    if use_js:
-      async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        playwright_ctx = {"browser": browser, "timeout": 15000}
-        tasks = [audit_site(session, r, pms_patterns, third_patterns, phone_patterns, use_js, playwright_ctx, host_states)
-                 for r in rows if r.get("website")]
-        results = []
-        for i in range(0, len(tasks), 150):
-          chunk = tasks[i:i+150]
-          partial = await asyncio.gather(*chunk)
-          for it in partial:
-            totals["attempted"] += 1
-            if it and (it.get("http_status") or it.get("pms_clues_site") or it.get("third_party_booking_clues") or it.get("phone_clues_site")):
-              results.append(it)
-              totals["success"] += 1
-            else:
-              totals["failed"] += 1
-        await browser.close()
-    else:
-      tasks = [audit_site(session, r, pms_patterns, third_patterns, phone_patterns, False, None, host_states)
-               for r in rows if r.get("website")]
-      results = []
-      for i in range(0, len(tasks), 200):
-        chunk = tasks[i:i+200]
-        partial = await asyncio.gather(*chunk)
-        for it in partial:
-          totals["attempted"] += 1
-          if it and (it.get("http_status") or it.get("pms_clues_site") or it.get("third_party_booking_clues") or it.get("phone_clues_site")):
-            results.append(it)
-            totals["success"] += 1
-          else:
-            totals["failed"] += 1
-
-  # write jsonl
-  with open(out_jsonl, "w", encoding="utf-8") as f:
-    for r in results:
-      f.write(json.dumps(r, ensure_ascii=False) + "\n")
-  # write csv
+  # Define CSV fieldnames
   fieldnames = [
     "id","name","website","final_url","http_status",
     "has_online_booking","has_online_forms","has_online_payments",
@@ -511,13 +538,80 @@ async def run(in_path, out_csv, out_jsonl, global_concurrency, use_js, fail_aler
     "likely_booking_vendor",
     "phone_clues_site","likely_phone_provider",
     "pms_clues_site","likely_pms","pms_confidence",
-    "evidence_urls"
+    "evidence_urls",
+    "booking_urls","payment_urls","forms_urls"
   ]
-  with open(out_csv, "w", newline="", encoding="utf-8") as f:
-    w = csv.DictWriter(f, fieldnames=fieldnames)
-    w.writeheader()
-    for r in results:
-      w.writerow(r)
+
+  # Open output files at the START
+  jsonl_file = None
+  csv_file = None
+  write_lock = threading.Lock()
+
+  try:
+    # Open files for incremental writing
+    jsonl_file = open(out_jsonl, "w", encoding="utf-8")
+    csv_file = open(out_csv, "w", newline="", encoding="utf-8")
+    csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+    csv_writer.writeheader()
+    csv_file.flush()  # Ensure header is written immediately
+
+    connector = aiohttp.TCPConnector(limit=global_concurrency, ssl=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+      if use_js:
+        async with async_playwright() as pw:
+          browser = await pw.chromium.launch(headless=True)
+          playwright_ctx = {"browser": browser, "timeout": 15000}
+          tasks = [audit_site(session, r, pms_patterns, third_patterns, phone_patterns, use_js, playwright_ctx, host_states)
+                   for r in rows if r.get("website")]
+          for i in range(0, len(tasks), 150):
+            chunk = tasks[i:i+150]
+            partial = await asyncio.gather(*chunk)
+            for it in partial:
+              totals["attempted"] += 1
+              if it and (it.get("http_status") or it.get("pms_clues_site") or it.get("third_party_booking_clues") or it.get("phone_clues_site")):
+                # Write result immediately
+                with write_lock:
+                  jsonl_file.write(json.dumps(it, ensure_ascii=False) + "\n")
+                  jsonl_file.flush()
+                  csv_writer.writerow(it)
+                  csv_file.flush()
+                totals["success"] += 1
+              else:
+                totals["failed"] += 1
+
+              # Progress update every 50 sites
+              if totals["attempted"] % 50 == 0:
+                print(f"[Progress] {totals['attempted']}/{len(tasks)} practices completed ({totals['attempted']/len(tasks)*100:.1f}%) - Success: {totals['success']}, Failed: {totals['failed']}", flush=True)
+          await browser.close()
+      else:
+        tasks = [audit_site(session, r, pms_patterns, third_patterns, phone_patterns, False, None, host_states)
+                 for r in rows if r.get("website")]
+        for i in range(0, len(tasks), 200):
+          chunk = tasks[i:i+200]
+          partial = await asyncio.gather(*chunk)
+          for it in partial:
+            totals["attempted"] += 1
+            if it and (it.get("http_status") or it.get("pms_clues_site") or it.get("third_party_booking_clues") or it.get("phone_clues_site")):
+              # Write result immediately
+              with write_lock:
+                jsonl_file.write(json.dumps(it, ensure_ascii=False) + "\n")
+                jsonl_file.flush()
+                csv_writer.writerow(it)
+                csv_file.flush()
+              totals["success"] += 1
+            else:
+              totals["failed"] += 1
+
+            # Progress update every 50 sites
+            if totals["attempted"] % 50 == 0:
+              print(f"[Progress] {totals['attempted']}/{len(tasks)} practices completed ({totals['attempted']/len(tasks)*100:.1f}%) - Success: {totals['success']}, Failed: {totals['failed']}", flush=True)
+
+  finally:
+    # Ensure files are closed properly
+    if jsonl_file:
+      jsonl_file.close()
+    if csv_file:
+      csv_file.close()
 
   # Alert on failure rate
   fail_rate = (100.0 * totals["failed"] / max(1, totals["attempted"]))

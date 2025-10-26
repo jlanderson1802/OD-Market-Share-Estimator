@@ -2,6 +2,7 @@ booking:
   - r"nexhealth|localmed|zocdoc|opencare|tab32|yapi|modento"
   - r"weave|solutionreach|lighthouse\s*360|doctible"
   - r"dental intel|dentalintel"
+  - r"recallmax|maxassist"
 forms:
   - r"jotform|typeform|gravityforms|formstack|intakeq|yapi|modento|denticon|hellosign|docusign"
 payments:

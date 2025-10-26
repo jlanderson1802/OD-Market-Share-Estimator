@@ -1,6 +1,7 @@
 google_places_api_key: ""
 yelp_api_key: ""
 bing_search_api_key: ""
+bing_search_endpoint: ""  # Optional: Custom Bing endpoint (e.g., https://YOUR_RESOURCE.cognitiveservices.azure.com/bing/v7.0/search)
 serpapi_api_key: ""
 
 # Optional per-call unit costs for budgeting

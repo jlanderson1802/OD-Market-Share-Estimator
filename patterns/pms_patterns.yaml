@@ -9,6 +9,18 @@ strong:
     - r"\beCentral\b"
   eaglesoft:
     - r"patient\.operadds\.com"
+  curve_dental:
+    - r"curve\s*hero|curvehero"
+    - r"curve\s*dental\s*patient"
+  denticon:
+    - r"denticon\.com/portal"
+    - r"mydenticon"
+  practice_web:
+    - r"practiceweb\.com"
+    - r"pw\s*patient\s*portal"
+  dolphin:
+    - r"dolphin\s*imaging"
+    - r"dolphinusa\.com"
 weak:
   open_dental:
     - r"\bOpen Dental\b"
@@ -19,3 +31,12 @@ weak:
   eaglesoft:
     - r"\bEaglesoft\b"
     - r"\bPatterson\b"
+  curve_dental:
+    - r"\bCurve Dental\b"
+    - r"\bCurve\b.*\bdental"
+  denticon:
+    - r"\bDenticon\b"
+  practice_web:
+    - r"\bPractice\s*Web\b"
+  dolphin:
+    - r"\bDolphin\b"

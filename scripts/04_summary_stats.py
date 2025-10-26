@@ -11,7 +11,7 @@ def main():
   ap.add_argument("--out-csv", required=True)
   args = ap.parse_args()
 
-  df = pd.read_csv(args.in)
+  df = pd.read_csv(getattr(args, 'in'))
   n = len(df)
 
   metrics = {}

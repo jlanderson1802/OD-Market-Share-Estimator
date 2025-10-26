@@ -1,8 +1,8 @@
 aiohttp
-async-timeout
 beautifulsoup4
 pyyaml
 pandas
 numpy
 tqdm
 playwright
+requests
